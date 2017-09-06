@@ -48,9 +48,10 @@ def unitTests():
     return _tests
 
 def settings():
-    return  {"URL":utils.serverLocationBasicAuth()+'/rest',
-            "USER":utils.GSUSER,
-            "PASSWORD":utils.GSPASSWORD}
+    return  {"GSHOSTNAME": utils.GSHOSTNAME,
+             "GSPORT": utils.GSPORT,
+            "GSUSER":utils.GSUSER,
+            "GSPASSWORD":utils.GSPASSWORD}
 
 def runAllUnitTests():
     ''' run all unittests - No funcgtional test managed only by Tester Plugin '''

@@ -6,15 +6,20 @@
 import os
 import xmlrpclib
 import zipfile
+import requests
+import StringIO
+import shutil
 
 from paver.easy import *
 from paver.doctools import html
 
+import json
+from collections import defaultdict
 
 options(
     plugin = Bunch(
         name = 'geoserverexplorer',
-        ext_libs = path('geoserverexplorer/ext-libs'),
+        ext_libs = path('geoserverexplorer/extlibs'),
         ext_src = path('geoserverexplorer/ext-src'),
         source_dir = path('geoserverexplorer'),
         package_dir = path('.'),
@@ -75,6 +80,21 @@ def setup(options):
             'ext_libs' : ext_libs.abspath(),
             'dep' : req
         })
+    get_certs()
+
+def get_certs():
+    print "Downloading and installing test certificates..."
+    certsPath = os.path.abspath("./_certs")
+    if os.path.exists(certsPath):
+        shutil.rmtree(certsPath)
+    r = requests.get("https://github.com/boundlessgeo/boundless-test-certs/archive/master.zip", stream=True)
+    z = zipfile.ZipFile(StringIO.StringIO(r.content))
+    z.extractall(path=certsPath)
+    dstPath = "./geoserverexplorer/test/resources/auth_system/certs-keys"
+    if os.path.exists(dstPath):
+        shutil.rmtree(dstPath)
+    shutil.copytree(os.path.join(certsPath, "boundless-test-certs-master", "certs-keys"), dstPath)
+    shutil.rmtree(certsPath)
 
 
 def read_requirements():
@@ -93,20 +113,39 @@ def read_requirements():
     return not_comments(0, idx), not_comments(idx+1, None)
 
 
-@task
-def install(options):
-    """Install plugin to QGIS plugin directory"""
+def _install(folder, options):
+    '''install plugin to qgis'''
+    builddocs(options)
     plugin_name = options.plugin.name
     src = path(__file__).dirname() / plugin_name
-    dst = path('~').expanduser() / '.qgis2' / 'python' / 'plugins' / plugin_name
+    dst = path('~').expanduser() / folder / 'python' / 'plugins' / plugin_name
     src = src.abspath()
     dst = dst.abspath()
-    if hasattr(src, 'symlink'):
-        src.symlink(dst)
-    else:
+    if not hasattr(os, 'symlink'):
         dst.rmtree()
         src.copytree(dst)
+    elif not dst.exists():
+        src.symlink(dst)
+    # Symlink the build folder to the parent
+    docs = path('..') / '..' / "docs" / 'build' / 'html'
+    docs_dest = path(__file__).dirname() / plugin_name / "docs"
+    docs_link = docs_dest / 'html'
+    if not docs_dest.exists():
+        docs_dest.mkdir()
+    if not docs_link.islink():
+        docs.symlink(docs_link)
 
+@task
+def install(options):
+    _install(".qgis2", options)
+
+@task
+def installdev(options):
+    _install(".qgis-dev", options)
+
+@task
+def install3(options):
+    _install(".qgis3", options)
 
 @task
 @cmdopts([
@@ -149,7 +188,7 @@ def pep8(args):
     ignore = ['E203', 'E121', 'E122', 'E123', 'E124', 'E125', 'E126', 'E127',
         'E128', 'E402']
     styleguide = pep8.StyleGuide(ignore=ignore,
-                                 exclude=['*/ext-libs/*', '*/ext-src/*'],
+                                 exclude=['*/extlibs/*', '*/ext-src/*'],
                                  repeat=True, max_line_length=79,
                                  parse_argv=args)
     styleguide.input_dir(options.plugin.source_dir)
@@ -229,12 +268,52 @@ def _make_zip(zipFile, options):
         for f in files:
             relpath = os.path.join(options.plugin.name, "docs", os.path.relpath(root, options.sphinx.builddir))
             zipFile.write(path(root) / f, path(relpath) / f)
- 
+
+def create_settings_docs(options):
+    settings_file = path(options.plugin.name) / "settings.json"
+    doc_file = options.sphinx.sourcedir / "settingsconf.rst"
+    with open(settings_file) as f:
+        settings = json.load(f)
+
+    grouped = defaultdict(list)
+    for setting in settings:
+        grouped[setting["group"]].append(setting)
+    with open (doc_file, "w") as f:
+        f.write("Plugin settings\n===============\n\n"
+                "The plugin can be adjusted using the following settings, "
+                "to be found in its settings dialog.\n")
+        for groupName, group in grouped.iteritems():
+            section_marks = "-" * len(groupName)
+            f.write("\n%s\n%s\n\n"
+                    ".. list-table::\n"
+                    "   :header-rows: 1\n"
+                    "   :stub-columns: 1\n"
+                    "   :widths: 20 80\n"
+                    "   :class: non-responsive\n\n"
+                    "   * - Option\n"
+                    "     - Description\n"
+                    % (groupName, section_marks))
+            for setting in group:
+                f.write("   * - %s\n"
+                        "     - %s\n"
+                        % (setting["label"], setting["description"]))
+
+
 @task
+@cmdopts([
+    ('clean', 'c', 'clean out built artifacts first'),
+])
 def builddocs(options):
-    sh("git submodule init")
-    sh("git submodule update")
+    clean = getattr(options, 'clean', False)
+    try: #this might fail if the plugin code is not in a git repo
+        sh("git submodule init")
+        sh("git submodule update")
+    except:
+        pass
+    create_settings_docs(options)
     cwd = os.getcwd()
     os.chdir(options.sphinx.docroot)
+    if clean:
+        sh("make clean")
     sh("make html")
     os.chdir(cwd)

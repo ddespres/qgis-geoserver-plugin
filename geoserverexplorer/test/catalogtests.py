@@ -16,8 +16,11 @@ from geoserverexplorer.test import utils
 from geoserverexplorer.test.utils import PT1, DEM, DEM2, PT1JSON, DEMASCII,\
     GEOLOGY_GROUP, GEOFORMS, LANDUSE, HOOK, WORKSPACE, WORKSPACEB
 import re
+from .utils import UtilsTestCase
+from qgiscommons2.settings import pluginSetting, setPluginSetting
 
-class CatalogTests(unittest.TestCase):
+
+class CatalogTests(UtilsTestCase):
     '''
     Tests for the CatalogWrapper class that provides additional capabilities to a gsconfig catalog
     Requires a Geoserver catalog running on localhost:8080 with default credentials
@@ -110,16 +113,15 @@ class CatalogTests(unittest.TestCase):
         b = re.sub(r"<sld:StyledLayerDescriptor.*?>", "", b)
         a = re.sub(r"<ogc:Literal>(\d+)\.(\d+)</ogc:Literal>", r"<ogc:Literal>\1</ogc:Literal>", a)
         b = re.sub(r"<ogc:Literal>(\d+)\.(\d+)</ogc:Literal>", r"<ogc:Literal>\1</ogc:Literal>", b)
-        self.assertEqual(a, b, "SLD compare failes: %s %s" % (a, b))
+        self.assertXMLEqual(a, b, "SLD compare failed %s\n%s" % (a, b))
 
     def testVectorStylingUpload(self):
         self.cat.publishLayer(PT1, self.ws, name = PT1)
         self.assertIsNotNone(self.cat.catalog.get_layer(PT1))
         # OGC filter has some fixes in 2.16
-        if QGis.QGIS_VERSION_INT >= 21600:
-            sldfile = os.path.join(os.path.dirname(__file__), "resources", "vector.2.16.sld")
-        else:
-            sldfile = os.path.join(os.path.dirname(__file__), "resources", "vector.sld")
+        # but it seems that they are now in Boundless 21408 too, so I removed the
+        # check for QGIS version and test against latest reference SLD
+        sldfile = os.path.join(os.path.dirname(__file__), "resources", "vector.2.16.sld")
         with open(sldfile, 'r') as f:
             sld = f.read()
         gssld = self.cat.catalog.get_style(PT1).sld_body
@@ -153,12 +155,11 @@ class CatalogTests(unittest.TestCase):
         if not catalog.processingOk:
             print 'skipping testPreuploadVectorHook, processing not installed'
             return
-        settings = QSettings()
-        oldHookFile = str(settings.value("/GeoServer/Settings/GeoServer/PreuploadVectorHook", ""))
+        oldHookFile = pluginSetting("PreuploadVectorHook")
         hookFile = os.path.join(os.path.dirname(__file__), "resources", "vector_hook.py")
-        settings.setValue("/GeoServer/Settings/GeoServer/PreuploadVectorHook", hookFile)
+        setPluginSetting("PreuploadVectorHook", hookFile)
         try:
-            hookFile = str(QSettings().value("/GeoServer/Settings/GeoServer/PreuploadVectorHook", ""))
+            hookFile = pluginSetting("PreuploadVectorHook")
             try:
                 self.cat.getAlgorithmFromHookFile(hookFile)
             except:
@@ -170,8 +171,22 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(1, layer.featureCount())
             QgsMapLayerRegistry.instance().removeMapLayer(layer.id())
         finally:
-            settings.setValue("/GeoServer/Settings/GeoServer/PreuploadVectorHook", oldHookFile)
+            setPluginSetting("PreuploadVectorHook", oldHookFile)
             self.cat.catalog.delete(self.cat.catalog.get_layer(HOOK), recurse = True)
+
+    def testUploadRenameAndDownload(self):
+        QgsNetworkAccessManager.instance().cache().clear()
+        self.cat.publishLayer(PT1, self.ws, name = PT1)
+        self.assertIsNotNone(self.cat.catalog.get_layer(PT1))
+        self.cat.addLayerToProject(PT1, PT1 + "_fromGeoserver")
+        layer = layers.resolveLayer(PT1 + "_fromGeoserver")
+        self.cat.publishLayer(PT1, self.ws, name = PT1 + "b")
+        self.cat.addLayerToProject(PT1 + "b", PT1 + "b_fromGeoserver")
+        layer = layers.resolveLayer(PT1 + "b_fromGeoserver")
+        self.cat.catalog.delete(self.cat.catalog.get_layer(PT1), recurse = True)
+        self.cat.catalog.delete(self.cat.catalog.get_layer(PT1 + "b"), recurse = True)
+
+
 
 ##################################################################################################
 

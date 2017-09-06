@@ -64,9 +64,25 @@ If you enable this option, whenever you connect to a catalog, the information th
 
 Retrieving information from each connection might take a long time and cause QGIS to take too long to start up. For this reason, catalog data is fetch on request and not automatically when starting the GeoServer Explorer. You should refresh the catalog item to populate it. Unpopulated catalogs are shown with a gray icon.
 
-If the catalog uses basic authentication and username and password are introduced using the basic authentication tab, the password is not stored. You will be prompted to enter it when you reconnect to the catalog. If the *Configurations" tab is used, connection data (wheter password or certificate-based) will be stored in the encrypted QGIS auth database. You will be prompted to enter the master password in case you haven't used the auth database in the current QGIS session.
+If the catalog uses basic authentication and username and password are introduced using the basic authentication tab, the password is not stored. You will be prompted to enter it when you reconnect to the catalog. If the *Configurations* tab is used, connection data (wheter password or certificate-based) will be stored in the encrypted QGIS auth database. You will be prompted to enter the master password in case you haven't used the auth database in the current QGIS session.
 
 To delete a catalog from the list of previous connections, use the *Remove* option of the catalog item in the Explorer tree.
+
+Automatically updating styles
+------------------------------
+
+If the corresponding property is enabled, the GeoServer Explorer plugin will take care of updating styles on the server whenever a layer that has been previously uploaded changes its simbology.
+
+When a layer is uploaded to a GeoServer catalog, the plugin will start tracking it. If the simbology of a layer changes, you will see a message like the following one in the message bar.
+
+.. figure:: img/intro/tracking.png
+  :align: center
+
+Select *Update* to upload the new style. Click on *Stop tracking this layer* to avoid seeing more messages like that when the layer changes its simbology.
+
+The style update works as well if the GeoServer Explorer is not open, or if the corresponding catalog is not active or not even listed in the Explorer tree.
+
+Layer tracking is based on the source property of the layer (the filepath in the case of file-based layers), so renaming or moving the layer will deactivate the tracking mechanism for that layer. Layer tracking persist between QGIS sessions and is not linked to the QGIS project the layer might belong to.
 
 Using the GeoServer Importer API
 --------------------------------
@@ -130,10 +146,15 @@ Even if you are using the correct version of GeoServer, some limitations still e
 
 Another important limitation is due to the different versions of the SLD standard that QGIS and GeoServer support. Read the following section to know more about it.
 
+Naming limitations
+-------------------
+GeoServer explorer has at the moment some known limitations when spaces and special chars are used in names for workspaces, stores, layers and symbology classes. The suggestion at the moment is to not use spaces or special chars when it comes to naming or symbology classes.
+
+
 Styling limitations
 -------------------
 
-The GeoServer explorer allows to edit the style of a GeoServer layer directly from the QGIS interface. It can convert a style defined in QGIS into a style to be uploaded to a GeoServer catalog, and use GeoServer styles for QGIS layers. This bidirectional conversion is, however, limited. This is mainly caused due to the different versions of the SLD standard that are supported by QGIS and GeoServer, and also to some limitations in both GeoServer and QGIS. SLD is used as the common format used by the GeoServer Explorer for describing styles in both QGIS and GeoServer layer, but some incompatibilities exist. To increase compatibility between them, specific routines have been added to the GeoServer explorer. However, in some cases, a style defined in QGIS might not be compatible with the elements supported by GeoServer, and publishing a layer will be done with a modified style, or even using a default one instead if that is not possible.
+GeoServer explorer allows to edit the style of a GeoServer layer directly from the QGIS interface. It can convert a style defined in QGIS into a style to be uploaded to a GeoServer catalog, and use GeoServer styles for QGIS layers. This bidirectional conversion is, however, limited. This is mainly caused due to the different versions of the SLD standard that are supported by QGIS and GeoServer, and also to some limitations in both GeoServer and QGIS. SLD is used as the common format used by the GeoServer Explorer for describing styles in both QGIS and GeoServer layer, but some incompatibilities exist. To increase compatibility between them, specific routines have been added to the GeoServer explorer. However, in some cases, a style defined in QGIS might not be compatible with the elements supported by GeoServer, and publishing a layer will be done with a modified style, or even using a default one instead if that is not possible.
 
 This problem exist even when using the most recent version of GeoServer, but older versions of GeoServer might show more incompatibilities and not validate a large part of the SLD produced by the GeoServer Explorer.
 
@@ -149,5 +170,6 @@ The following is a list of known limitations in SLD handling:
 
 * Vector layers
 
-  * When converting from a GeoServer style to a QGIS style, the style is always defined as a *Rule-based* style. That means that, even if the style is created using another type, such as *Graduated*, when it is uploaded to a GeoServer catalog and then edited again from QGIS, it will not appear as a *Graduated* style. This is due to how QGIS handles SLD styles, always interpreting them as symbology of type *Rule-based*
+  * When converting from a GeoServer style to a QGIS style, the style is always defined as a *Rule-based* style. That means that, even if the style is created using another type, such as *Graduated*, when it is uploaded to a GeoServer catalog and then edited again from QGIS, it will not appear as a *Graduated* style. This is due to how QGIS handles SLD styles, always interpreting them as symbology of type *Rule-based*. An example of this limitation is actually a consequence of an upstream QGIS issue (https://hub.qgis.org/issues/14170): *Graduated* or *Categorized* QGIS styles including a non-specific symbology class will be translated to an equivalent *Rule-based* where the rule representing the non-specific will miss an *ELSE* expression. This issue can be easily fixed by removing manually such symbology class, or adding to it manually the necessary *ELSE* expression.
   * Basic labeling is supported, but not all labeling will be exported from QGIS to SLD and uploaded to GeoServer. In particular, advanced data-dependent labelling is not supported.
+  * Importing a point layer with a SVG style from QGIS to Geoserver results in a WMS layer that respects such SVG symbol. The same is not supported for now if the layer is re-imported as WFS layer.

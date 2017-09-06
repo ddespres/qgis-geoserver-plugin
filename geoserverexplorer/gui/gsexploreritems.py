@@ -42,6 +42,9 @@ from geoserverexplorer.gui.gsoperations import *
 from geoserverexplorer.geoserver.retry import RetryCatalog
 from geoserverexplorer.geoserver.auth import AuthCatalog
 from geoserverexplorer.gui.gsoperations import addDraggedStyleToLayer
+import xml.dom.minidom
+from qgiscommons2.settings import pluginSetting
+from qgiscommons2.files import tempFilename
 
 class GsTreeItem(TreeItem):
 
@@ -118,9 +121,8 @@ class GsTreeItem(TreeItem):
             toUpdate = toUpdate - toDelete
         elif not confirmDelete():
             return
-        settings = QtCore.QSettings()
-        deleteStyle = bool(settings.value("/GeoServer/Settings/GeoServer/DeleteStyle", True, bool))
-        recurse = bool(settings.value("/GeoServer/Settings/GeoServer/Recurse", True, bool))
+        deleteStyle = pluginSetting("DeleteStyle")
+        recurse = pluginSetting("Recurse")
 
         elements[0:0] = dependent
         if recurse:
@@ -259,7 +261,7 @@ class GsCatalogsItem(GsTreeItem):
         icon = QtGui.QIcon(os.path.dirname(__file__) + "/../images/geoserver.png")
         GsTreeItem.__init__(self, None, icon, "Catalogs")
         settings = QtCore.QSettings()
-        saveCatalogs = bool(settings.value("/GeoServer/Settings/GeoServer/SaveCatalogs", True, bool))
+        saveCatalogs = pluginSetting("SaveCatalogs")
         if saveCatalogs:
             settings.beginGroup("/GeoServer/Catalogs")
             for name in settings.childGroups():
@@ -283,8 +285,7 @@ class GsCatalogsItem(GsTreeItem):
                 QtGui.QApplication.setOverrideCursor(QtGui.QCursor(QtCore.Qt.WaitCursor))
                 if not QGis.QGIS_VERSION_INT < 21200 and dlg.authid:
                     # For QGIS >= 2.12, use the new AuthCatalog and QgsNetworkAccessManager
-                    settings = QtCore.QSettings()
-                    cache_time = int(settings.value("/GeoServer/Settings/GeoServer/AuthCatalogXMLCacheTime", 180, int))
+                    cache_time = pluginSetting("AuthCatalogXMLCacheTime")
                     cat = AuthCatalog(dlg.url, dlg.authid, cache_time)
                     self.catalog = cat
                 elif dlg.certfile is not None:
@@ -294,7 +295,9 @@ class GsCatalogsItem(GsTreeItem):
                 cat.authid = dlg.authid
                 v = cat.gsversion()
                 try:
-                    supported = float(v[:3]) > 2.299
+                    major = int(v.split(".")[0])
+                    minor = int(v.split(".")[1])
+                    supported = major > 2 or (major == 2 and minor > 2)
                 except:
                     supported = False
                 if not supported:
@@ -341,7 +344,12 @@ class GsLayersItem(GsTreeItem):
             if layer.name in items:
                 items[layer.name].markAsDuplicated()
             else:
-                layerItem = GsLayerItem(layer)
+                try:
+                    layerItem = GsLayerItem(layer)
+                except:
+                    config.iface.messageBar().pushMessage("Warning", "Layers %s could not be added" % layer.name,
+                      level = QgsMessageBar.WARNING,
+                      duration = 10)
                 layerItem.populate()
                 self.addChild(layerItem)
                 items[layer.name] = layerItem
@@ -510,8 +518,7 @@ class GsCatalogItem(GsTreeItem):
                     authtype = QgsAuthManager.instance().configAuthMethodKey(authid)
                     if not authtype or authtype == '':
                         raise Exception("Cannot restore catalog. Invalid or missing auth information")
-                    settings = QtCore.QSettings()
-                    cache_time = int(settings.value("/GeoServer/Settings/GeoServer/AuthCatalogXMLCacheTime", 180, int))
+                    cache_time =  pluginSetting("AuthCatalogXMLCacheTime")
                     self.catalog = AuthCatalog(url, authid, cache_time)
                     # if authtype == 'Basic':
                     #     amconfig = QgsAuthMethodConfig()
@@ -573,9 +580,11 @@ class GsCatalogItem(GsTreeItem):
         self.addChild(self.gwcItem)
         if not self.gwcItem.isValid:
             self.gwcItem.setDisabled(True)
-        self.wpsItem = GsProcessesItem(self.catalog)
-        self.addChild(self.wpsItem)
-        self.wpsItem.populate()
+        #=======================================================================
+        # self.wpsItem = GsProcessesItem(self.catalog)
+        # self.addChild(self.wpsItem)
+        # self.wpsItem.populate()
+        #=======================================================================
         self.settingsItem = GsSettingsItem(self.catalog)
         self.addChild(self.settingsItem)
         icon = QtGui.QIcon(os.path.dirname(__file__) + "/../images/geoserver.png")
@@ -632,8 +641,7 @@ class GsCatalogItem(GsTreeItem):
         if dlg.ok:
             if not QGis.QGIS_VERSION_INT < 21200 and dlg.authid:
                 # For QGIS >= 2.12, use the new AuthCatalog and QgsNetworkAccessManager
-                settings = QtCore.QSettings()
-                cache_time = int(settings.value("/GeoServer/Settings/GeoServer/AuthCatalogXMLCacheTime", 180, int))
+                cache_time = pluginSetting("AuthCatalogXMLCacheTime")
                 self.catalog = AuthCatalog(dlg.url, dlg.authid, cache_time)
             elif getattr(dlg, 'certfile', False):
                 self.catalog = PKICatalog(dlg.url, dlg.keyfile, dlg.certfile, dlg.cafile)
@@ -1161,6 +1169,11 @@ class GsStyleItem(GsTreeItem):
                 QtGui.QMessageBox.warning(explorer, "Edit style", "Editing raster layer styles is currently not supported")
                 return
         sld = self.element.sld_body
+        try:
+            _sld = "\n".join([line for line in
+                              xml.dom.minidom.parseString(self.style.sld_body).toprettyxml().splitlines() if line.strip()])
+        except:
+            self._showSldParsingError()
         sld = adaptGsToQgs(sld)
         sldfile = tempFilename("sld")
         with open(sldfile, 'w') as f:
@@ -1183,9 +1196,17 @@ class GsStyleItem(GsTreeItem):
         if newSld != oldSld:
             explorer.run(self.element.update_body, "Update style", [], newSld)
 
+    def _showSldParsingError(self):
+        config.iface.messageBar().pushMessage("Warning", "Style is not stored as XML and cannot be edited",
+                                              level = QgsMessageBar.WARNING,
+                                              duration = 10)
+
     def editSLD(self, tree, explorer):
-        dlg = SldEditorDialog(self.element, explorer)
-        dlg.exec_()
+        try:
+            dlg = SldEditorDialog(self.element, explorer)
+            dlg.exec_()
+        except:
+            self._showSldParsingError()
 
     def deleteStyle(self, tree, explorer):
         self.deleteElements([self], tree, explorer)
@@ -1243,10 +1264,20 @@ class GsWorkspaceItem(GsTreeItem):
 
     def populate(self):
         stores = self.element.catalog.get_stores(self.element)
+        nonAscii = False
         for store in stores:
             storeItem = GsStoreItem(store)
-            storeItem.populate()
+            try:
+                storeItem.populate()
+            except UnicodeDecodeError:
+                nonAscii = True
+                continue
             self.addChild(storeItem)
+
+        if nonAscii:
+            config.iface.messageBar().pushMessage("Warning", "Some datasores contain non-ascii characters and could not be loaded",
+                                  level = QgsMessageBar.WARNING,
+                                  duration = 10)
 
 
     def contextMenuActions(self, tree, explorer):

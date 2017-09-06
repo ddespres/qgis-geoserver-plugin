@@ -4,7 +4,9 @@
 # This code is licensed under the GPL 2.0 license.
 #
 import os
+import re
 import tempfile
+import unittest
 from geoserver.util import shapefile_and_friends
 from geoserverexplorer.qgis.catalog import createGeoServerCatalog
 
@@ -39,7 +41,7 @@ WORKSPACE = safeName("workspace")
 WORKSPACEB = safeName("workspaceb")
 
 # envs that can be override by os.environ envs
-GSHOSTNAME = 'boundless-test'
+GSHOSTNAME = 'suite.boundless.test'
 GSPORT = '8080'
 GSSSHPORT = '8443'
 GSUSER = 'admin'
@@ -162,18 +164,15 @@ def populateCatalog(cat):
 
 
 def geoserverLocation():
-    server = GSHOSTNAME
-    port = GSPORT
-    server = os.getenv('GSHOSTNAME', server)
-    port = os.getenv('GSPORT', port)
-    return '%s:%s' % (server, port)
+    host = os.getenv("GSHOSTNAME", GSHOSTNAME)
+    port = os.getenv("GSPORT", GSPORT)
+    return '%s:%s' % (host, port)
 
 
 def geoserverLocationSsh():
-    location = geoserverLocation().split(":")[0]
-    sshport = GSSSHPORT
-    sshport = os.getenv('GSSSHPORT', sshport)
-    return '%s:%s' % (location, sshport)
+    host = os.getenv("GSHOSTNAME", GSHOSTNAME)
+    port = os.getenv("GSSSHPORT", GSSSHPORT)
+    return '%s:%s' % (host, port)
 
 
 def serverLocationBasicAuth():
@@ -379,6 +378,7 @@ def openAndUpload():
     catWrapper = setUpCatalogAndWorkspace()
     cat = catWrapper.catalog
     # catWrapper = CatalogWrapper(cat)
+
     catWrapper.publishLayer(layer, "test_workspace", True)
     stores = cat.get_stores("test_workspace")
     assert len(stores) != 0
@@ -387,6 +387,7 @@ def openAndUpload():
     quri.setParam("styles", 'qgis_plugin_test_pt1')
     quri.setParam("format", 'image/png')
     quri.setParam("crs", 'EPSG:4326')
+
     if AUTHM:
         quri.setParam("url", serverLocationPkiAuth()+'/wms')
     else:
@@ -413,3 +414,36 @@ def layerFromName(name):
     for layer in layers:
         if layer.name() == name:
             return layer
+
+
+class UtilsTestCase(unittest.TestCase):
+
+    RE_ATTRIBUTES = b'[^>\s]+=[^>\s]+'
+
+    def assertXMLEqual(self, response, expected, msg=''):
+        """Compare XML line by line and sorted attributes"""
+        # Ensure we have newlines
+        if response.count('\n') < 2:
+            response = re.sub('(</[^>]+>)', '\\1\n', response)
+            expected = re.sub('(</[^>]+>)', '\\1\n', expected)
+        response_lines = response.splitlines()
+        expected_lines = expected.splitlines()
+        line_no = 1
+        for expected_line in expected_lines:
+            expected_line = expected_line.strip()
+            response_line = response_lines[line_no - 1].strip()
+            # Compare tag
+            try:
+                self.assertEqual(re.findall(b'<([^>\s]+)[ >]', expected_line)[0],
+                                 re.findall(b'<([^>\s]+)[ >]', response_line)[0], msg=msg + "\nTag mismatch on line %s: %s != %s" % (line_no, expected_line, response_line))
+            except IndexError:
+                self.assertEqual(expected_line, response_line, msg=msg + "\nTag line mismatch %s: %s != %s" % (line_no, expected_line, response_line))
+            #print("---->%s\t%s == %s" % (line_no, expected_line, response_line))
+            # Compare attributes
+            if re.match(self.RE_ATTRIBUTES, expected_line): # has attrs
+                expected_attrs = re.findall(self.RE_ATTRIBUTES, expected_line)
+                expected_attrs.sort()
+                response_attrs = re.findall(self.RE_ATTRIBUTES, response_line)
+                response_attrs.sort()
+                self.assertEqual(expected_attrs, response_attrs, msg=msg + "\nXML attributes differ at line {0}: {1} != {2}".format(line_no, expected_attrs, response_attrs))
+            line_no += 1
